@@ -83,6 +83,8 @@
     rsvps: [],
     myGuestId: localGet('djed-my-guest-id'),
     pendingCharacterKey: null,
+    pendingGuestId: null,   // one id per check-in, so retries overwrite instead of duplicating
+    saving: false,          // lives in state (not on the button) so re-renders can't reset the guard
     rolling: false,
     guestNameInput: '',
     rsvpNameInput: '',
@@ -377,7 +379,7 @@
         '<h2>Add Your Photo</h2>'+
         photoHtml+
         '<input type="file" accept="image/*" capture="user" id="photoInput" hidden>'+
-        (mine ? '' : '<button class="btn blue" id="saveBtn">✅ Save &amp; Join the Capsule</button>')+
+        (mine ? '' : '<button class="btn blue" id="saveBtn" '+(state.saving?'disabled':'')+'>'+(state.saving?'Saving...':'✅ Save &amp; Join the Capsule')+'</button>')+
         (mine ? '<p style="text-align:center; opacity:0.6; font-size:12px; margin-top:8px;">You\'re checked in! See everyone in the Capsule tab.</p>' : '')+
       '</div>') : '');
 
@@ -453,10 +455,15 @@
     var saveBtn = document.getElementById('saveBtn');
     if(saveBtn){
       saveBtn.addEventListener('click', function(){
+        if(state.saving) return;
         if(!state.pendingCharacterKey){ toast('Get your mission first!'); return; }
+        // RTDB fires the local "guests" listener (-> render()) the moment set() is called, before the
+        // server confirms. Keeping the guard in state means that re-render still shows a disabled button.
+        state.saving = true;
         saveBtn.disabled = true;
         saveBtn.textContent = 'Saving...';
-        var id = uid();
+        if(!state.pendingGuestId) state.pendingGuestId = uid();
+        var id = state.pendingGuestId;
         var info = CHARACTER_INFO[state.pendingCharacterKey];
         var record = {
           name: state.guestNameInput.trim(),
@@ -468,12 +475,15 @@
         db.ref('guests/'+id).set(record).then(function(){
           localSet('djed-my-guest-id', id);
           state.myGuestId = id;
+          state.saving = false;
+          state.pendingGuestId = null;
           toast('Welcome to the mission, '+record.name+'!');
           render();
         }).catch(function(){
+          // keep pendingGuestId: a retry writes to the same key, so it can't create a second record
+          state.saving = false;
           toast('Could not save — check your connection and try again.');
-          saveBtn.disabled = false;
-          saveBtn.textContent = '✅ Save & Join the Capsule';
+          render();
         });
       });
     }
